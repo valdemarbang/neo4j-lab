@@ -8,11 +8,13 @@ from dotenv import load_dotenv
 import json
 from typing import List
 import random
+from A2_create_graph import create_neo4j_graph
 
 # --- Configuration ---
 np.random.seed(42)
 
 load_dotenv()
+
 # Add your API key or other configurations if needed
 SEMANTIC_SCHOLAR_BASE_URL = os.getenv('SEMANTIC_SCHOLAR_BASE_URL')
 JOURNAL_NAMES = json.loads(os.getenv('JOURNAL_NAMES'))
@@ -160,7 +162,7 @@ def extract_paper_details(paper, number_papers):
         return None
 """
 
-def export_to_neo4j(papers_db):
+def create_csv_data(papers_db):
     """
     Export the gathered data to Neo4j.
     This could be done by:
@@ -204,6 +206,8 @@ def export_to_neo4j(papers_db):
     # Export the updated data to CSV
     df.to_csv('./csv/papers_venues.csv', index=False, sep='|')
 
+    return df, df_aff
+
 
 # --- Main Process ---
 
@@ -239,8 +243,11 @@ def main():
     print(f"Total papers gathered: {len(papers_db)}")
 
     # Step 4: Export the data to Neo4j
-    export_to_neo4j(papers_db)
+    df, df_aff = create_csv_data(papers_db)
     print("Exported data to Neo4j.")
+
+    # Connect to neo4j driver and create graph
+    create_neo4j_graph(papers_db, df, df_aff)
 
 if __name__ == "__main__":
     main()
