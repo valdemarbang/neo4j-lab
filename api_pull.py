@@ -10,11 +10,11 @@ from typing import List
 import random
 
 # --- Configuration ---
-SEMANTIC_SCHOLAR_BASE_URL = "https://api.semanticscholar.org/graph/v1"
-# Add your API key or other configurations if needed
 np.random.seed(42)
 
 load_dotenv()
+# Add your API key or other configurations if needed
+SEMANTIC_SCHOLAR_BASE_URL = os.getenv('SEMANTIC_SCHOLAR_BASE_URL')
 JOURNAL_NAMES = json.loads(os.getenv('JOURNAL_NAMES'))
 ISSN_LIST = json.loads(os.getenv('ISSN_LIST'))
 CONFERENCE_NAMES = json.loads(os.getenv('CONFERENCE_NAMES'))
@@ -168,7 +168,7 @@ def export_to_neo4j(papers_db):
       - OR using a Neo4j driver (like neo4j or py2neo) to create nodes and relationships directly.
     """
     # Export papers to CSV
-    with open('papers_venues.csv', mode='w', newline='', encoding='utf-8',) as file:
+    with open('./csv/papers_venues.csv', mode='w', newline='', encoding='utf-8',) as file:
         writer = csv.writer(file, delimiter="|")
         # Write the header
         writer.writerow([
@@ -186,7 +186,7 @@ def export_to_neo4j(papers_db):
                 details["authorNames"], details["fields"]
             ])
     #Create random citation links from the list of papers
-    df = pd.read_csv('papers_venues.csv', delimiter='|')
+    df = pd.read_csv('./csv/papers_venues.csv', delimiter='|')
     df['citedPaperID'] = df['paperID'].apply(lambda x: get_random_citations(x, df['paperID'].values))
 
     #Create random reviews links from the list of authors
@@ -199,10 +199,10 @@ def export_to_neo4j(papers_db):
     unique_author_ids = list(set(";".join(list(df['authorIDs'])).split(";")))
     author_affiliations = np.random.choice(LIST_AFF, size=len(unique_author_ids), replace=True)
     df_aff = pd.DataFrame({'authorID': unique_author_ids, 'affiliation': author_affiliations})
-    df_aff.to_csv('authors_affiliations.csv', index=False, sep='|')
+    df_aff.to_csv('./csv/authors_affiliations.csv', index=False, sep='|')
 
     # Export the updated data to CSV
-    df.to_csv('papers_venues.csv', index=False, sep='|')
+    df.to_csv('./csv/papers_venues.csv', index=False, sep='|')
 
 
 # --- Main Process ---
