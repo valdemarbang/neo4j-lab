@@ -2,4 +2,4 @@ requests
 pandas
 numpy
 dotenv
-neo4j
+neo4j-driver
