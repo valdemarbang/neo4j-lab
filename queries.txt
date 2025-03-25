@@ -1,0 +1,129 @@
+MATCH (n)
+DETACH DELETE n;
+
+LOAD CSV WITH HEADERS FROM 'file:///papers.csv' AS r 
+FIELDTERMINATOR '|'
+CREATE (p:Papers)
+SET p = r;
+
+LOAD CSV WITH HEADERS FROM 'file:///papers.csv' AS row
+FIELDTERMINATOR "|"
+CREATE (p:Paper {
+    paperID: row.paperID,
+    title: row.title,
+    year: toInteger(row.year),
+    abstract: row.abstract,
+    pages: row.pages,
+    doi: row.doi
+});
+
+LOAD CSV WITH HEADERS FROM 'file:///papers.csv' AS row
+FIELDTERMINATOR "|"
+WITH row, split(row.authorIDs, ';') AS authorIDs, split(row.authorNames, ';') AS authorNames
+UNWIND range(0, size(authorIDs) - 1) AS i
+MERGE (a:Author {authorID: authorIDs[i], name: authorNames[i]});
+
+LOAD CSV WITH HEADERS FROM 'file:///papers.csv' AS row
+FIELDTERMINATOR "|"
+WITH row, split(row.fields, ';') AS fields
+UNWIND fields AS field
+MERGE (f:Field {name: field});
+
+LOAD CSV WITH HEADERS FROM 'file:///papers.csv' AS row
+FIELDTERMINATOR "|"
+WITH row
+WHERE row.journal_name IS NOT NULL AND row.journal_name <> ''
+MERGE (j:Journal {name: row.journal_name});
+
+LOAD CSV WITH HEADERS FROM 'file:///papers.csv' AS row
+FIELDTERMINATOR "|"
+WITH row 
+WHERE row.publicationVenue_name IS NOT NULL AND row.publicationVenue_name <> ''
+MERGE (v:PublicationVenue {name: row.publicationVenue_name});
+
+LOAD CSV WITH HEADERS FROM 'file:///papers.csv' AS row
+FIELDTERMINATOR "|"
+WITH row
+WHERE row.volume_id IS NOT NULL AND row.volume_id <> ''
+MERGE (vo:Volume {volumeId: row.volume_id, volume: row.volume});
+
+LOAD CSV WITH HEADERS FROM 'file:///papers.csv' AS row
+FIELDTERMINATOR "|"
+WITH row
+WHERE row.edition_id IS NOT NULL AND row.edition_id <> ''
+MERGE (e:Edition {editionId: row.edition_id, city: row.city_venue});
+
+LOAD CSV WITH HEADERS FROM 'file:///papers.csv' AS row
+FIELDTERMINATOR "|"
+WITH row, split(row.authorIDs, ';') AS authorIDs
+MATCH (p:Paper {paperID: row.paperID})
+UNWIND authorIDs AS authorID
+MATCH (a:Author {authorID: authorID})
+CREATE (p)-[:WRITTEN_BY]->(a);
+
+LOAD CSV WITH HEADERS FROM 'file:///papers.csv' AS row
+FIELDTERMINATOR "|"
+WITH row, split(row.fields, ';') AS fields
+MATCH (p:Paper {paperID: row.paperID})
+UNWIND fields AS field
+MATCH (f:Field {name: field})
+CREATE (p)-[:IN_FIELD]->(f);
+
+LOAD CSV WITH HEADERS FROM 'file:///papers.csv' AS row
+FIELDTERMINATOR "|"
+WITH row 
+WHERE row.volume_id IS NOT NULL AND row.volume_id <> ''
+MATCH (p:Paper {paperID: row.paperID})
+MATCH (vo:Volume {volumeId: row.volume_id})
+CREATE (p)-[:PUBLISHED_IN]->(vo);
+
+LOAD CSV WITH HEADERS FROM 'file:///papers.csv' AS row
+FIELDTERMINATOR "|"
+WITH row 
+WHERE row.edition_id IS NOT NULL AND row.edition_id <> ''
+MATCH (p:Paper {paperID: row.paperID})
+MATCH (e:Edition {editionId: row.edition_id})
+CREATE (p)-[:PUBLISHED_IN_VENUE]->(e);
+
+LOAD CSV WITH HEADERS FROM 'file:///papers.csv' AS row
+FIELDTERMINATOR "|"
+WITH row
+WHERE row.volume_id IS NOT NULL AND row.volume_id <> ''
+MATCH (j:Journal {name: row.journal_name})
+MATCH (vo:Volume {volumeId: row.volume_id})
+CREATE (vo)-[:VOLUME_OF]->(j);
+
+LOAD CSV WITH HEADERS FROM 'file:///papers.csv' AS row
+FIELDTERMINATOR "|"
+WITH row 
+WHERE row.edition_id IS NOT NULL AND row.edition_id <> ''
+MATCH (v:PublicationVenue {name: row.publicationVenue_name})
+MATCH (e:Edition {editionId: row.edition_id})
+CREATE (e)-[:BELONGS_TO]->(v);
+
+LOAD CSV WITH HEADERS FROM 'file:///authors_affiliations.csv' AS row
+FIELDTERMINATOR "|"
+MERGE (f:Affiliation {affiliation: row.affiliation});
+
+LOAD CSV WITH HEADERS FROM 'file:///authors_affiliations.csv' AS row
+FIELDTERMINATOR "|"
+MATCH (a:Author {authorID: row.authorID})
+MATCH (f:Affiliation {affiliation: row.affiliation})
+CREATE (a)-[:AFFILIATED_TO]->(f);
+
+LOAD CSV WITH HEADERS FROM 'file:///papers.csv' AS row
+FIELDTERMINATOR "|"
+WITH row, split(row.citedPaperID, ';') AS citedIDs
+MATCH (p:Paper {paperID: row.paperID})
+UNWIND citedIDs AS citedID
+MATCH (pc:Paper {paperID: citedID})
+CREATE (pc)-[:CITES]->(p);
+
+LOAD CSV WITH HEADERS FROM 'file:///papers.csv' AS row
+FIELDTERMINATOR "|"
+WITH row, split(row.reviewerIDs, ';') AS reviewerIDs, split(row.reviewsApprovements, ';') AS reviewsApprovements, split(row.reviewsDescs, ';') AS reviewsDesc
+MATCH (p:Paper {paperID: row.paperID})
+UNWIND range(0, size(reviewerIDs) - 1) AS i
+MATCH (a:Author {authorID: reviewerIDs[i]})
+CREATE (p)-[:REVIEWED_BY{reviewApprovement: reviewsApprovements[i], reviewDesc: reviewsDesc[i]}]->(a);
+
