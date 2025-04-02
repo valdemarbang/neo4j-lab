@@ -43,6 +43,7 @@ def get_bulk_paper_data(query_params):
     else:
         print("Error fetching bulk paper data:", response.status_code, response.text)
         return []
+    
 
 def generate_id(type: str, **kwargs) :
     if type == "journal" :
@@ -77,10 +78,29 @@ def get_random_citations(paper_id, paper_ids):
     num_citations = np.random.randint(0, 21)  # Random number of citations (0 to 20)
     return ";".join(np.random.choice(available_ids, size=num_citations, replace=False).tolist())
 
-def get_random_reviews(writer_ids, author_ids) :
-    available_ids = author_ids[~author_ids.str.contains(writer_ids)]  # Exclude the writers ids
-    flattened_ids = np.concatenate(np.char.split(list(available_ids), ";"))
-    return ";".join(np.random.choice(flattened_ids, size=3, replace=False).tolist())
+def get_random_reviews(writer_ids, author_ids_series):
+    # Ensure input is valid
+    author_ids_series = author_ids_series.dropna().astype(str)
+
+    # Sanitize writer_ids
+    writer_ids = "" if pd.isna(writer_ids) or not isinstance(writer_ids, str) else writer_ids
+
+    # Skip if nothing to match against
+    if writer_ids == "":
+        available_ids = author_ids_series
+    else:
+        # Make sure pattern is a string, and disable regex
+        available_ids = author_ids_series[~author_ids_series.str.contains(writer_ids, regex=False, na=False)]
+
+    if available_ids.empty:
+        return ""
+
+    flattened_ids = np.concatenate([a.split(";") for a in available_ids if isinstance(a, str)])
+    if len(flattened_ids) == 0:
+        return ""
+
+    sample_size = min(3, len(flattened_ids))
+    return ";".join(np.random.choice(flattened_ids, size=sample_size, replace=False))
 
 def generate_boolean_proba(p: float) -> bool :
     return np.random.random() < p
@@ -126,7 +146,7 @@ def extract_paper_details(paper, number_papers):
     categories = set([field.get("category") for field in list_of_fields if field.get("category")])
     fields = ";".join(categories)
 
-    if not (doi and pages and abstract and title and year):
+    if not (author_ids and doi and title and year):
         return None
     return {
         "paperID": paper.get("paperId"),
@@ -197,7 +217,7 @@ def create_csv_data(papers_db):
     df["reviewsDesc"] = "desc;desc;desc"
 
     # Create random affiliations for authors
-    unique_author_ids = list(set(";".join(list(df['authorIDs'])).split(";")))
+    unique_author_ids = list(set(";".join(df['authorIDs'].dropna().astype(str)).split(";")))
     author_affiliations = np.random.choice(LIST_AFF, size=len(unique_author_ids), replace=True)
     df_aff = pd.DataFrame({'authorID': unique_author_ids, 'affiliation': author_affiliations})
     df_aff.to_csv('./csv/authors_affiliations.csv', index=False, sep='|')
