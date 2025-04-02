@@ -104,9 +104,9 @@ def main():
         print("Connection successful!")
         with driver.session(database="neo4j") as session:
             session.execute_write(find_top_3_cited_papers)
-            #session.execute_write(conference_workshop_communities)
-            #session.execute_write(impact_factor_journals)
-            #session.execute_write(h_index_authors)
+            session.execute_write(conference_workshop_communities)
+            session.execute_write(impact_factor_journals)
+            session.execute_write(h_index_authors)
 
 if __name__ == "__main__":
      main()
