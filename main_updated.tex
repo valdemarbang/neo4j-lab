@@ -1,0 +1,353 @@
+\documentclass{article}
+\usepackage{graphicx} % Required for inserting images
+\usepackage{amsmath}
+\usepackage{minted}
+\usepackage[
+backend=biber,
+style=ieee,
+sorting=ynt
+]{biblatex}
+\usepackage{hyperref}
+
+\addbibresource{references.bib}
+
+% Change section numbering to letters (A, B, C...)
+\renewcommand{\thesection}{\Alph{section}}
+
+% Change subsection numbering to A.1, A.2, B.1, etc.
+\renewcommand{\thesubsection}{\thesection.\arabic{subsection}}
+
+\title{SDM - Assignment 1}
+\author{Valdemar Bång, Rosen Dimov, Eliott Macé}
+
+\begin{document}
+
+\maketitle
+
+\section{Modeling, Loading, Evolving} \
+
+\subsection{Modeling}
+
+Here is a succint visual representation of our graph : \\\\
+\includegraphics[scale=0.2]{graph.png}
+
+The elements have the following properties : 
+
+\begin{itemize}
+    \item Paper : id, title, year, abstract, pages, doi
+    \item Author : id, name
+    \item Field : name
+    \item Journal : journal\_name
+    \item Venue (conference or workshop) : venue\_name
+    \item Volume : id, volume
+    \item Edition : id, city
+\end{itemize}
+
+We modeled it that way to optimize the queries without missing any information. The "reviewed by" property will allow us to easily adapt our graph in the A.3 part. We can easily get the papers belonging to a specific venue or related to some keywords. We can also get the papers written by an author or the authors and reviewers of a paper.
+
+\subsection{Instantiating/Loading}
+Fetched papers come from Semantic Scholar via the API \textit{/paper/search/bulk} endpoint, where you are allowed to fetch a maximum of 1000 papers. The query gets papers based on \textit{machine learning} and outputs real attributes like:
+\begin{itemize}
+    \item The paper ID
+    \item doi
+    \item title
+    \item year
+    \item abstract (if available)
+    \item pages (if available) 
+    \item authors (including author ID and name)
+    \item fields
+\end{itemize}
+
+The rest of the metadata is randomly generated using a seed for things that is not directly provided in the API response.
+These are things like venue related information:
+\begin{itemize}
+    \item Journal or Conference/Workshop type is randomly chosen for each paper.
+    \item Journal name, ISSN and volume is randomly chosen from a configuration file.
+    \item Conference/Workshop name and city is randomly chosen from a configuration file.
+\end{itemize}
+
+Also things like relationsship and author affiliations are also generated such as:
+\begin{itemize}
+    \item Citations which is randomly assigned from the list of retrieved paper IDs
+    \item Reviewers which is randomly selected from other author IDs
+    \item Review descriptions
+    \item Author affiliations randomly assigned from a list to each unique author ID. 
+\end{itemize}
+
+
+\subsection{Evolving the graph}
+
+To enhance the expressiveness and analytical capabilities of the existing graph model, we propose the following extensions:
+
+\begin{enumerate}
+    \item \textbf{Author Affiliation} \\
+    A new node type, \texttt{Organisation}, will be introduced to represent entities such as universities or companies. A new relationship, \texttt{IS\_AFFILIATED}, will link each \texttt{Author} to their respective \texttt{Organisation}. This extension enables more detailed modeling of institutional affiliations and supports queries involving organizational contexts.
+
+    \item \textbf{Review Modeling} \\
+    Two alternative approaches are considered for integrating review information into the graph:
+
+    \begin{itemize}
+        \item \textit{Approach A – Enriching the \texttt{REVIEWED\_BY} Relationship:} \\
+        The existing \texttt{REVIEWED\_BY} relationship between \texttt{Paper} and \texttt{Author} can be extended with the following properties:
+        \begin{itemize}
+            \item \texttt{content}: a textual description of the review
+            \item \texttt{decision}: a binary value indicating acceptance or rejection (e.g., ``yes''/``no'')
+        \end{itemize}
+        This approach retains the current structure and supports basic review-related queries with minimal complexity.
+
+        \item \textit{Approach B – Introducing a \texttt{Review} Node (Recommended):} \\
+        The \texttt{REVIEWED\_BY} relationship is replaced with a more expressive subgraph:
+        \begin{center}
+            \texttt{(:Author)-[:CREATED]->(:Review)-[:REVIEWS]->(:Paper)}
+        \end{center}
+        The \texttt{Review} node holds the following properties:
+        \begin{itemize}
+            \item \texttt{content}: the full review text
+            \item \texttt{decision}: the suggested decision (``yes''/``no'')
+        \end{itemize}
+        This structure facilitates better traversal and review management, supports advanced querying (e.g., sentiment analysis, filtering by decision), and is more scalable for future extensions (e.g., timestamps, review scores).
+    \end{itemize}
+
+    \item \textbf{Acceptance Status of Papers} \\
+    A paper is considered accepted if a majority of its associated reviews suggest acceptance. This status can be either computed dynamically or stored as a boolean property, \texttt{is\_accepted}, on the \texttt{Paper} node to support efficient filtering and querying.
+\end{enumerate}
+
+\section{Querying} \
+The goal was to write efficient Cypher queries (i.e., queries that minimize the number of disk accesses required and the size of intermediate results generated) for the following tasks below.
+
+\subsection{Find the top 3 most cited papers of each conference/workshop.}\label{sec_top3}
+To find the top 3 most cited papers for each workshop or conference, we first use a \texttt{MATCH} query to retrieve every paper published in a venue. We then use \texttt{OPTIONAL MATCH} to find all papers that cite each of those papers.
+
+Next, we group the data by venue and paper, and count how many times each paper has been cited. The results are sorted in descending order by citation count. Finally, we collect the top 3 most cited papers for each venue and return them along with the venue name.
+
+\begin{minted}[fontsize=\small, linenos, breaklines]{cypher}
+MATCH (p:Paper)-[:PUBLISHED_IN_VENUE]->(e:Edition)-[:BELONGS_TO]->(v:PublicationVenue)
+OPTIONAL MATCH (citingPaper:Paper)-[:CITES]->(p)
+WITH v.name AS venueName, p, count(citingPaper) AS citationCount
+                 
+ORDER BY citationCount DESC
+WITH venueName, collect({paperID: p.paperID, title: p.title, citationCount: citationCount}) AS papers
+RETURN venueName, papers[0..3] AS top3CitedPapers
+\end{minted}
+
+\subsection{For each conference/workshop find its community: i.e., those authors that have
+published papers on that conference/workshop in, at least, 4 different editions}
+
+This query follows a similar structure to Section~\ref{sec_top3}, beginning with a \texttt{MATCH} to find all papers and the venues (conferences/workshops) in which they were published. In addition, we match the authors who wrote these papers.
+
+We then group the data by conference name and author name, and collect the distinct edition IDs in which each author has published. 
+
+Finally, we filter the results to include only those authors who have published in at least four different editions of the same venue.
+
+\begin{minted}[fontsize=\small, linenos, breaklines]{cypher}
+MATCH (p:Paper)-[:PUBLISHED_IN_VENUE]->(e:Edition)-[:BELONGS_TO]->(v:PublicationVenue)
+MATCH (p)-[:WRITTEN_BY]->(a:Author)
+WITH v.name AS venueName, 
+    a.name AS authorName, 
+    collect(DISTINCT e.editionId) AS editions
+                 
+WHERE size(editions) >= 4
+RETURN venueName, authorName, size(editions) AS numEditions
+\end{minted}
+
+\subsection{Find the impact factor of the journals in your graph.}
+
+To compute the journal impact factor, we use the following formula from the lab instructions~\cite{wikipediacontributors_2020_impact}:
+
+\[
+\mathrm{IF}_y = \frac{\mathrm{Citations}_y}{\mathrm{Publications}_{y-1} + \mathrm{Publications}_{y-2}}.
+\]
+
+According to the formula above, the impact factor for a given year \texttt{y} is the number of citations received in year \texttt{y} to papers published in the journal during the previous two years, divided by the total number of papers published in those two years.
+
+To implement this in Cypher, we first count the number of citations received in each year for each journal. We then count how many papers were published in that journal in the two preceding years. Finally, we use these values to compute the impact factor for each journal and return the results.
+
+\begin{minted}[fontsize=\small, linenos, breaklines]{cypher}
+MATCH (citing:Paper)-[:CITES]->(cited:Paper)
+    -[:PUBLISHED_IN]->(v:Volume)
+    -[:VOLUME_OF]->(j:Journal)
+WITH j, citing.year AS currentYear, COUNT(*) AS totalCitations
+                 
+MATCH (paper1:Paper)-[:PUBLISHED_IN]->(v1:Volume)-[:VOLUME_OF]->(j)
+WHERE paper1.year = currentYear - 1
+WITH j, currentYear, totalCitations, COUNT(paper1) AS pubCountYminus1   
+
+MATCH (paper2:Paper)-[:PUBLISHED_IN]->(v2:Volume)-[:VOLUME_OF]->(j)
+WHERE paper2.year = currentYear - 2
+WITH j, 
+    currentYear, 
+    totalCitations, 
+    pubCountYminus1, 
+    COUNT(paper2) AS pubCountYminus2   
+                 
+RETURN 
+j.name AS journal, 
+currentYear AS impactFactorYear,
+CASE 
+    WHEN (pubCountYminus1 + pubCountYminus2) > 0 
+    THEN (1.0 * totalCitations / (pubCountYminus1 + pubCountYminus2))
+    ELSE 0
+END AS impactFactor
+ORDER BY journal, impactFactorYear;
+\end{minted}
+
+
+\subsection{Find the h-index of the authors in your graph.}
+
+To calculate the h-index of each author, we use the definition from the lab instructions~\cite{wikipediacontributors_2020_hindex}. Since calculating the h-index directly in Cypher is quite complex, we simplify the process by retrieving each author's name along with the number of citations for each of their papers.
+
+\begin{minted}[fontsize=\small, linenos, breaklines]{cypher}
+MATCH (p:Paper)-[:WRITTEN_BY]->(a:Author)
+OPTIONAL MATCH (citing:Paper)-[:CITES]->(p)
+RETURN a.name AS authorName, COUNT(citing) AS citationCount
+\end{minted}
+
+In Python, we then process the query result by grouping citation counts for each author. For every author, we collect the citation counts of all their papers, sort them in descending order, and apply the h-index algorithm.
+
+The h-index is calculated by checking how many papers have at least \( h \) citations. We increase \( h \) as long as the number of citations for the \( i \)-th paper is greater than or equal to \( i+1 \). Once this condition fails, the current \( h \) value is returned.
+
+\begin{minted}[fontsize=\small, linenos, breaklines]{python}
+author_citations = defaultdict(list)
+for record in result:
+    author = record["authorName"]
+    citation_count = record["citationCount"]
+    author_citations[author].append(citation_count)
+
+for author, citations in author_citations.items():
+    sorted_cites = sorted(citations, reverse=True)
+    h_index = 0
+    for i, c in enumerate(sorted_cites):
+        if c >= i + 1:
+            h_index += 1
+        else:
+            break
+    print(f"{author} has h-index {h_index}")
+\end{minted}
+
+\section{Recommender}
+
+In this section, we implement a recommender system for scientific articles. The implementation is structured into four distinct steps. Each step's results will be stored directly within the Neo4j graph database, allowing future queries to efficiently access this information without recomputation.
+
+\subsection{Defining a Research Community}
+
+A research community is represented by a set of relevant keywords. In our case, we define a community related to databases using the keywords: \textit{data management, indexing, data modeling, big data, data processing, data storage,} and \textit{data querying}. These keywords can be modified as needed.
+
+The following Neo4j query establishes this community and associates it with the specified keywords:
+
+\begin{minted}[fontsize=\small, linenos, breaklines]{cypher}
+MERGE (rc:ResearchCommunity {name: "Database Community"})
+WITH rc
+MATCH (k:Keyword)
+WHERE k.name IN [
+"data management",
+"indexing",
+"data modeling",
+"big data",
+"data processing",
+"data storage",
+"data querying"
+]
+MERGE (rc)-[:HAS_KEYWORD]->(k)
+RETURN rc, collect(k.name) AS keywords;
+\end{minted}
+
+\subsection{Identifying Relevant Conferences, Workshops, and Journals}
+
+This step identifies publication venues significantly focused on the defined keywords. A venue is considered relevant if at least 90% of its published papers contain one or more of the community's keywords.
+
+The following Neo4j query evaluates each venue against this criterion and creates relationships to mark venues that meet the threshold:
+
+\begin{minted}[fontsize=\small, linenos, breaklines]{cypher}
+MATCH (rc:ResearchCommunity {name:"Database Community"})
+MATCH (rc)-[:HAS_KEYWORD]->(k:Keyword)
+WITH rc, collect(k.name) AS dbKeywords
+MATCH (p:Paper)-[:PUBLISHED_IN_VENUE]->(v:PublicationVenue)
+WITH v, p, dbKeywords
+OPTIONAL MATCH (p)-[:IN_FIELD]->(f:Keyword)
+WITH v, p, dbKeywords, collect(f.name) AS paperKeywords
+WITH v, count(p) AS totalPapers,
+sum(CASE WHEN any(keyword IN paperKeywords WHERE keyword IN dbKeywords) THEN 1 ELSE 0 END) AS dbPapers
+WHERE totalPapers > 0 AND (dbPapers * 1.0 / totalPapers) >= 0.9
+MERGE (v)-[:RELATED_TO {ratio: dbPapers * 1.0 / totalPapers}]->(rc)
+RETURN v.name AS Venue, totalPapers, dbPapers;
+\end{minted}
+
+\subsection{Identifying the Most Relevant Papers}
+
+To highlight key contributions, we select the top 100 papers within the research community based on their citation counts. Papers receiving numerous citations indicate significant relevance and influence.
+
+The following Neo4j query retrieves and labels the most-cited papers:
+
+\begin{minted}[fontsize=\small, linenos, breaklines]{cypher}
+MATCH (rc:ResearchCommunity {name:"Database Community"})
+MATCH (v:PublicationVenue)-[:RELATED_TO]->(rc)
+MATCH (p:Paper)-[:PUBLISHED_IN_VENUE]->(v)
+WITH rc, p
+MATCH (rc)-[:HAS_KEYWORD]->(k:Keyword)
+WITH rc, p, collect(k.name) AS dbKeywords
+OPTIONAL MATCH (p)<-[:CITES]-(citing:Paper)
+OPTIONAL MATCH (citing)-[:IN_FIELD]->(f:Keyword)
+WHERE f.name IN dbKeywords
+WITH p, count(DISTINCT citing) AS citations, rc
+ORDER BY citations DESC
+LIMIT 100
+SET p :TopPaper, p.topCitations = citations
+MERGE (rc)-[:HAS_TOP_PAPER]->(p)
+RETURN p.title AS Title, citations;
+\end{minted}
+
+\subsection{Identifying Potential Reviewers and Gurus}
+
+Finally, we recommend authors as potential reviewers for new submissions based on their authorship of top papers. Additionally, authors with at least two top papers are identified as \textit{gurus}, highlighting their expertise for reviewing high-impact research.
+
+The Neo4j query below performs this identification:
+
+\begin{minted}[fontsize=\small, linenos, breaklines]{cypher}
+MATCH (rc:ResearchCommunity {name:"Database Community"})
+MATCH (p:TopPaper)-[:WRITTEN_BY]->(a:Author)
+MERGE (a)-[:POTENTIAL_REVIEWER]->(rc)
+WITH a, count(p) AS topPaperCount, rc
+WHERE topPaperCount >= 2
+MERGE (a)-[:GURU {topPapers: topPaperCount}]->(rc)
+RETURN a.name AS Author, topPaperCount;
+\end{minted}
+
+\subsection{Example: Fetching Recommended Papers}
+
+Suppose we have a paper with the ID "1041292" and want to fetch five recommended papers based on the research community it belongs to. The following query accomplishes this:
+
+\begin{minted}[fontsize=\small, linenos, breaklines]{cypher}
+MATCH (p:Paper {id: "1041292"})-[:PUBLISHED_IN]->(v:Venue)-[:RELATED_TO]->(rc:ResearchCommunity)
+MATCH (rc)-[:HAS_TOP_PAPER]->(recommended:TopPaper)
+WHERE recommended.id <> "1041292"
+RETURN recommended.title AS RecommendedPaper, recommended.topCitations AS Citations
+ORDER BY recommended.topCitations DESC
+LIMIT 5;
+\end{minted}
+
+\section{Graph Algorithms} \
+
+In this section, we study two different algorithms in our graph : \textbf{betweenness centrality} and \textbf{Dijkstra algorithm}.
+
+\subsection{Betweenness centrality} \
+
+The purpose of this algorithm is to compute the centrality of every node in a graph. A graph with a high centrality score means that it has a high influence on the flow of information. In our graph, \textbf{we apply this algorithm in the papers and citations relationships}. Therefore, a high centrality score will mean that a paper has a strong influence on his field. \\
+
+The two papers with the highest score are the following : \textbf{"Natural Adversarial Examples"} and \textbf{"A new evolutionary system for evolving artificial neural networks"}. On the other hand, the two papers with the lowest scores are : \textbf{"A kernel method for multi-labelled classification"} and \textbf{"Empathic: An Unappreciated Way of Being"}. \\
+
+The results are not surprising, the two first papers address more broad subjects while the two last papers are much more specific, thus having less influence on their field. 
+
+\subsection{Dijkstra algorithm} \
+
+The idea of the \textbf{Dijkstra single-source algorithm} is to find the shortest path from one node to the other nodes of the graph. \\
+
+Here, we apply this algorithm \textbf{on authors}, assuming that a path can go through the "CITES" or the "WRITTEN\_BY" relationship. When creating the graph, we transform the relationships in such a way that the \textbf{edges are undirected} otherwise we would not be able to compute a path between two authors. \\
+
+To give an example, we run this algorithm with the author F. Viégas as the source node. We find that there are 10 other authors such that the shortest path with the source is 2 : this means that \textbf{Viégas has collaborated with 10 authors} (at least in our graph). The authors who are at a distance of 3 are the authors who have collaborated with a collaborator of Viégas and so on. \\
+
+With this algorithm applied on the authors, we can have a better idea of the authors who are \textbf{close or not to a specific author}.
+
+
+\printbibliography
+
+\end{document}
