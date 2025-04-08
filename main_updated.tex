@@ -112,6 +112,79 @@ To enhance the expressiveness and analytical capabilities of the existing graph 
     A paper is considered accepted if a majority of its associated reviews suggest acceptance. This status can be either computed dynamically or stored as a boolean property, \texttt{is\_accepted}, on the \texttt{Paper} node to support efficient filtering and querying.
 \end{enumerate}
 
+The incorporation of author affiliations and an enhanced review modeling structure requires a number of modifications to the existing property graph. These changes are outlined and justified below, along with the Cypher queries used to implement them in Neo4j.
+
+\subsection*{Author Affiliation Modeling}
+
+To represent institutional affiliations of authors, a new node type \texttt{Organisation} is introduced. Each \texttt{Organisation} node captures entities such as universities, research institutes, or companies. Authors are then connected to these organisations via the relationship \texttt{IS\_AFFILIATED}, allowing the graph to model academic and industrial associations more realistically.
+
+The \texttt{Organisation} nodes can be manually created using Cypher, as shown below:
+
+\begin{minted}[fontsize=\small, linenos, breaklines]{cypher}
+CREATE (:Organisation {id: "org1", name: "UPC", type: "University"});
+CREATE (:Organisation {id: "org2", name: "Google", type: "Company"});
+\end{minted}
+
+Alternatively, for large-scale data integration, organisational data can also be imported from an external CSV file using standard import procedures.
+
+Once the organisations exist in the graph, affiliations can be established by linking an author to the relevant organisation:
+
+\begin{minted}[fontsize=\small, linenos, breaklines]{cypher}
+MATCH (a:Author {id: "author1"}), (o:Organisation {name: "UPC"})
+CREATE (a)-[:IS_AFFILIATED]->(o);
+\end{minted}
+
+This modeling decision enhances the semantic richness of the graph, enabling more complex queries such as identifying all authors affiliated with a specific institution or differentiating between academic and corporate contributors.
+
+\subsection*{Review Modeling and Transformation}
+
+To accurately capture peer reviews associated with academic publications, we extend the graph model to include an explicit \texttt{Review} node. This approach replaces the previously implicit model where review information was either omitted or represented solely via the \texttt{REVIEWED\_BY} relationship.
+
+Since the existing \texttt{REVIEWED\_BY} relationships do not yet contain the actual review content or decision, this information must first be added manually or imported via an external source. For example, assuming the content and decision of a review are known, the following query can be used to add them as properties to the relationship:
+
+\begin{minted}[fontsize=\small, linenos, breaklines]{cypher}
+MATCH (p:Paper)-[r:REVIEWED_BY]->(a:Author)
+WHERE p.id = "paper1" AND a.id = "author1"
+SET r.content = "This paper presents a novel contribution to the field.",
+    r.decision = "yes";
+\end{minted}
+
+Once the properties have been added, the transformation from the legacy structure to the enriched model can be accomplished using the following Cypher query: 
+
+
+
+\begin{minted}[fontsize=\small, linenos, breaklines]{cypher}
+MATCH (p:Paper)-[r:REVIEWED_BY]->(a:Author)
+CREATE (review:Review {
+    content: r.content, 
+    decision: r.decision
+})
+CREATE (a)-[:CREATED]->(review)
+CREATE (review)-[:REVIEWS]->(p)
+\end{minted}
+
+In this structure, each \texttt{Review} node holds review-specific metadata, including a textual description (\texttt{content}) and a binary decision (\texttt{decision}) indicating whether the reviewer recommends acceptance or rejection of the paper. These nodes are then linked to both the reviewer (\texttt{Author}) and the reviewed \texttt{Paper}, supporting clear and flexible traversals for data analysis.
+
+Maintaining the original \texttt{REVIEWED\_BY} relationships during this transformation ensures backward compatibility with existing queries and applications. However, if legacy support is not required, these relationships can be safely removed to streamline the graph schema. This can be done using the following query:
+
+\begin{minted}[fontsize=\small, linenos, breaklines]{cypher}
+MATCH (p:Paper)-[r:REVIEWED_BY]->(a:Author)
+DELETE r
+\end{minted}
+
+The resulting model provides a more expressive and extensible representation of peer review processes, enabling analyses such as counting positive reviews, computing acceptance ratios, and exploring review texts in detail.
+
+With the following command we can also set up the decision property of each paper:
+
+\begin{minted}[fontsize=\small, linenos, breaklines]{cypher}
+MATCH (p:Paper)<-[:REVIEWS]-(review:Review)
+WITH p,
+     COUNT(review) AS total_reviews,
+     COUNT(CASE WHEN review.decision = 'yes' THEN 1 END) AS yes_reviews
+SET p.is_accepted = yes_reviews > total_reviews / 2
+\end{minted}
+
+
 \section{Querying} \
 The goal was to write efficient Cypher queries (i.e., queries that minimize the number of disk accesses required and the size of intermediate results generated) for the following tasks below.
 
